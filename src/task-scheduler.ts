@@ -201,6 +201,34 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           continue;
         }
 
+        // If a container is already running for this group, pipe the task
+        // in via IPC instead of waiting for it to close (which could be 30+ min)
+        if (deps.queue.isActive(currentTask.chat_jid)) {
+          const prefix = '[SCHEDULED TASK - This is an automated task, not a direct user message]\n\n';
+          const sent = deps.queue.sendMessage(currentTask.chat_jid, prefix + currentTask.prompt);
+          if (sent) {
+            logger.info({ taskId: currentTask.id }, 'Piped scheduled task into active container');
+            let nextRun: string | null = null;
+            if (currentTask.schedule_type === 'cron') {
+              const interval = CronExpressionParser.parse(currentTask.schedule_value, { tz: TIMEZONE });
+              nextRun = interval.next().toISOString();
+            } else if (currentTask.schedule_type === 'interval') {
+              nextRun = new Date(Date.now() + parseInt(currentTask.schedule_value, 10)).toISOString();
+            }
+            // 'once' tasks: nextRun stays null → status becomes 'completed'
+            updateTaskAfterRun(currentTask.id, nextRun, 'Piped to active container');
+            logTaskRun({
+              task_id: currentTask.id,
+              run_at: new Date().toISOString(),
+              duration_ms: 0,
+              status: 'success',
+              result: 'Piped to active container',
+              error: null,
+            });
+            continue;
+          }
+        }
+
         deps.queue.enqueueTask(
           currentTask.chat_jid,
           currentTask.id,
