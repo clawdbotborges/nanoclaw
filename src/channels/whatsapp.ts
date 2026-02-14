@@ -5,7 +5,9 @@ import path from 'path';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  WAMessage,
   WASocket,
+  downloadMediaMessage,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -20,6 +22,71 @@ import { logger } from '../logger.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/** Read a key from .env (same approach as container-runner.ts). */
+function readEnvKey(key: string): string | undefined {
+  const envFile = path.join(process.cwd(), '.env');
+  if (!fs.existsSync(envFile)) return undefined;
+  for (const line of fs.readFileSync(envFile, 'utf-8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    if (trimmed.slice(0, eqIdx).trim() === key) {
+      let value = trimmed.slice(eqIdx + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      return value || undefined;
+    }
+  }
+  return undefined;
+}
+
+/** Transcribe audio buffer via ElevenLabs Scribe API. */
+async function transcribeAudio(buffer: Buffer): Promise<string | null> {
+  const apiKey = readEnvKey('ELEVENLABS_API_KEY');
+  if (!apiKey) {
+    logger.warn('ELEVENLABS_API_KEY not configured, skipping transcription');
+    return null;
+  }
+  const formData = new FormData();
+  formData.append('model_id', 'scribe_v2');
+  formData.append('file', new Blob([buffer], { type: 'audio/ogg' }), 'voice.ogg');
+
+  const res = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+    method: 'POST',
+    headers: { 'xi-api-key': apiKey },
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    logger.error({ status: res.status, body }, 'ElevenLabs transcription failed');
+    return null;
+  }
+  const json = await res.json() as { text?: string };
+  return json.text?.trim() || null;
+}
+
+/** Download and transcribe a WhatsApp audio message. */
+async function transcribeVoiceMessage(msg: WAMessage, sock: WASocket): Promise<string | null> {
+  try {
+    const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+      logger: logger as any,
+      reuploadRequest: sock.updateMediaMessage,
+    }) as Buffer;
+    if (!buffer || buffer.length === 0) {
+      logger.error('Failed to download audio message');
+      return null;
+    }
+    logger.info({ bytes: buffer.length }, 'Downloaded audio message, transcribing...');
+    return await transcribeAudio(buffer);
+  } catch (err) {
+    logger.error({ err }, 'Voice message download/transcription error');
+    return null;
+  }
+}
 
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
@@ -164,12 +231,24 @@ export class WhatsAppChannel implements Channel {
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
-          const content =
+          let content =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
             msg.message?.videoMessage?.caption ||
             '';
+
+          // Transcribe voice/audio messages
+          if (msg.message?.audioMessage && !content) {
+            const transcript = await transcribeVoiceMessage(msg, this.sock);
+            if (transcript) {
+              content = `[Voice message: ${transcript}]`;
+              logger.info({ chatJid, length: transcript.length }, 'Transcribed voice message');
+            } else {
+              content = '[Voice message - transcription unavailable]';
+            }
+          }
+
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
 
