@@ -274,6 +274,25 @@ Use available_groups.json to find the JID for a group. The folder name should be
   },
 );
 
+server.tool(
+  'send_voice_message',
+  "Send a voice message to the user. The text will be converted to speech and sent as a WhatsApp voice note. Use this when the user asks you to reply with a voice note or voice message.",
+  {
+    text: z.string().describe('The text to convert to speech and send as a voice message'),
+  },
+  async (args) => {
+    writeIpcFile(MESSAGES_DIR, {
+      type: 'voice_message',
+      chatJid,
+      text: args.text,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { content: [{ type: 'text' as const, text: 'Voice message sent.' }] };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -10,7 +10,7 @@ import {
   POLL_INTERVAL,
   TRIGGER_PATTERN,
 } from './config.js';
-import { WhatsAppChannel } from './channels/whatsapp.js';
+import { WhatsAppChannel, textToSpeech } from './channels/whatsapp.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -492,6 +492,15 @@ async function main(): Promise<void> {
   });
   startIpcWatcher({
     sendMessage: (jid, text) => whatsapp.sendMessage(jid, text),
+    sendVoiceMessage: async (jid, text) => {
+      const audio = await textToSpeech(text);
+      if (audio) {
+        await whatsapp.sendVoiceMessage(jid, audio);
+      } else {
+        // Fallback to text if TTS fails
+        await whatsapp.sendMessage(jid, `${ASSISTANT_NAME}: ${text}`);
+      }
+    },
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroupMetadata: (force) => whatsapp.syncGroupMetadata(force),

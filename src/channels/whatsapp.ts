@@ -69,6 +69,34 @@ async function transcribeAudio(buffer: Buffer): Promise<string | null> {
   return json.text?.trim() || null;
 }
 
+/** Convert text to speech via ElevenLabs TTS API. */
+export async function textToSpeech(text: string): Promise<Buffer | null> {
+  const apiKey = readEnvKey('ELEVENLABS_API_KEY');
+  if (!apiKey) {
+    logger.warn('ELEVENLABS_API_KEY not configured, skipping TTS');
+    return null;
+  }
+  const voiceId = 'EXAVITQu4vr4xnSDxMaL'; // Sarah
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: 'POST',
+    headers: {
+      'xi-api-key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      text,
+      model_id: 'eleven_multilingual_v2',
+      output_format: 'opus_48000_64',
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    logger.error({ status: res.status, body }, 'ElevenLabs TTS failed');
+    return null;
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
 /** Download and transcribe a WhatsApp audio message. */
 async function transcribeVoiceMessage(msg: WAMessage, sock: WASocket): Promise<string | null> {
   try {
@@ -279,6 +307,19 @@ export class WhatsAppChannel implements Channel {
       // If send fails, queue it for retry on reconnect
       this.outgoingQueue.push({ jid, text });
       logger.warn({ jid, err, queueSize: this.outgoingQueue.length }, 'Failed to send, message queued');
+    }
+  }
+
+  async sendVoiceMessage(jid: string, audio: Buffer): Promise<void> {
+    if (!this.connected) {
+      logger.warn({ jid }, 'Cannot send voice message: disconnected');
+      return;
+    }
+    try {
+      await this.sock.sendMessage(jid, { audio, ptt: true, mimetype: 'audio/ogg; codecs=opus' });
+      logger.info({ jid, bytes: audio.length }, 'Voice message sent');
+    } catch (err) {
+      logger.error({ jid, err }, 'Failed to send voice message');
     }
   }
 

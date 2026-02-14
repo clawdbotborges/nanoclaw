@@ -57,6 +57,14 @@ NEVER use markdown. Only use WhatsApp/Telegram formatting:
 
 No ## headings. No [links](url). No **double stars**.
 
+## Voice Messages
+
+You can send voice messages using `mcp__nanoclaw__send_voice_message`. Use it when:
+- The user asks you to reply with a voice note or voice message
+- The user explicitly asks you to "say" something out loud
+
+Do NOT use voice messages by default. Only use them when the user requests a voice response.
+
 ## Email (Gmail)
 
 You have access to Gmail via MCP tools:
