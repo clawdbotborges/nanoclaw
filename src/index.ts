@@ -142,6 +142,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages);
 
+  // Collect media files from messages for vision
+  const mediaFiles = missedMessages
+    .filter(m => m.mediaPath && m.mediaType)
+    .map(m => ({
+      hostPath: m.mediaPath!,
+      mediaType: m.mediaType!,
+      sender: m.sender_name,
+      timestamp: m.timestamp,
+    }));
+
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
@@ -150,7 +160,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length },
+    { group: group.name, messageCount: missedMessages.length, mediaCount: mediaFiles.length },
     'Processing messages',
   );
 
@@ -169,7 +179,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const output = await runAgent(group, prompt, chatJid, mediaFiles, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
@@ -213,6 +223,7 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  mediaFiles?: Array<{hostPath: string, mediaType: string, sender: string, timestamp: string}>,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
@@ -263,6 +274,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        mediaFiles: mediaFiles?.length ? mediaFiles : undefined,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
@@ -352,9 +364,19 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // Collect media files from piped messages for vision
+          const pipedMediaFiles = messagesToSend
+            .filter(m => m.mediaPath && m.mediaType)
+            .map(m => ({
+              hostPath: m.mediaPath!,
+              mediaType: m.mediaType!,
+              sender: m.sender_name,
+              timestamp: m.timestamp,
+            }));
+
+          if (queue.sendMessage(chatJid, formatted, pipedMediaFiles.length ? pipedMediaFiles : undefined)) {
             logger.debug(
-              { chatJid, count: messagesToSend.length },
+              { chatJid, count: messagesToSend.length, mediaCount: pipedMediaFiles.length },
               'Piped messages to active container',
             );
             lastAgentTimestamp[chatJid] =
@@ -500,6 +522,9 @@ async function main(): Promise<void> {
         // Fallback to text if TTS fails
         await whatsapp.sendMessage(jid, `${ASSISTANT_NAME}: ${text}`);
       }
+    },
+    sendImageMessage: async (jid, image, caption) => {
+      await whatsapp.sendImageMessage(jid, image, caption);
     },
     registeredGroups: () => registeredGroups,
     registerGroup,

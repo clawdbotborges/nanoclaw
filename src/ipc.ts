@@ -18,6 +18,7 @@ import { RegisteredGroup } from './types.js';
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   sendVoiceMessage: (jid: string, text: string) => Promise<void>;
+  sendImageMessage: (jid: string, image: Buffer, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
@@ -73,7 +74,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.chatJid && data.text) {
+              if (data.chatJid && (data.text || data.imagePath)) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
@@ -86,6 +87,24 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       { chatJid: data.chatJid, sourceGroup },
                       'IPC voice message sent',
                     );
+                  } else if (data.type === 'image_message') {
+                    if (data.imagePath) {
+                      const fullImagePath = path.join(ipcBaseDir, sourceGroup, data.imagePath);
+                      if (fs.existsSync(fullImagePath)) {
+                        const imageBuffer = fs.readFileSync(fullImagePath);
+                        await deps.sendImageMessage(data.chatJid, imageBuffer, data.caption);
+                        fs.unlinkSync(fullImagePath);
+                        logger.info(
+                          { chatJid: data.chatJid, sourceGroup, imagePath: data.imagePath },
+                          'IPC image message sent',
+                        );
+                      } else {
+                        logger.warn(
+                          { chatJid: data.chatJid, imagePath: fullImagePath },
+                          'IPC image file not found',
+                        );
+                      }
+                    }
                   } else if (data.type === 'message') {
                     await deps.sendMessage(
                       data.chatJid,

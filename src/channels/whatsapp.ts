@@ -12,7 +12,7 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { STORE_DIR } from '../config.js';
+import { DATA_DIR, STORE_DIR } from '../config.js';
 import {
   getLastGroupSync,
   setLastGroupSync,
@@ -22,6 +22,13 @@ import { logger } from '../logger.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function mimeToExt(mime: string): string {
+  const map: Record<string, string> = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+  };
+  return map[mime] || 'jpg';
+}
 
 /** Read a key from .env (same approach as container-runner.ts). */
 function readEnvKey(key: string): string | undefined {
@@ -277,6 +284,40 @@ export class WhatsAppChannel implements Channel {
             }
           }
 
+          // Download image/video media for vision
+          let mediaPath: string | undefined;
+          let mediaType: string | undefined;
+
+          if (msg.message?.imageMessage) {
+            try {
+              const buffer = await downloadMediaMessage(msg, 'buffer', {});
+              const ext = mimeToExt(msg.message.imageMessage.mimetype || 'image/jpeg');
+              const mediaDir = path.join(DATA_DIR, 'media');
+              fs.mkdirSync(mediaDir, { recursive: true });
+              const filename = `${msg.key.id}.${ext}`;
+              fs.writeFileSync(path.join(mediaDir, filename), buffer as Buffer);
+              mediaPath = path.join(mediaDir, filename);
+              mediaType = msg.message.imageMessage.mimetype || 'image/jpeg';
+              if (!content) content = '[Image]';
+              logger.info({ chatJid, mediaPath }, 'Downloaded image media');
+            } catch (err) {
+              logger.error({ chatJid, err }, 'Failed to download image');
+              if (!content) content = '[Image - download failed]';
+            }
+          } else if (msg.message?.videoMessage) {
+            const thumbnail = msg.message.videoMessage.jpegThumbnail;
+            if (thumbnail) {
+              const mediaDir = path.join(DATA_DIR, 'media');
+              fs.mkdirSync(mediaDir, { recursive: true });
+              const filename = `${msg.key.id}-thumb.jpg`;
+              fs.writeFileSync(path.join(mediaDir, filename), thumbnail);
+              mediaPath = path.join(mediaDir, filename);
+              mediaType = 'image/jpeg';
+            }
+            const seconds = msg.message.videoMessage.seconds || 0;
+            if (!content) content = `[Video: ${seconds}s]`;
+          }
+
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
 
@@ -288,6 +329,8 @@ export class WhatsAppChannel implements Channel {
             content,
             timestamp,
             is_from_me: msg.key.fromMe || false,
+            mediaPath,
+            mediaType,
           });
         }
       }
@@ -320,6 +363,19 @@ export class WhatsAppChannel implements Channel {
       logger.info({ jid, bytes: audio.length }, 'Voice message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send voice message');
+    }
+  }
+
+  async sendImageMessage(jid: string, image: Buffer, caption?: string): Promise<void> {
+    if (!this.connected) {
+      logger.warn({ jid }, 'Cannot send image: disconnected');
+      return;
+    }
+    try {
+      await this.sock.sendMessage(jid, { image, caption });
+      logger.info({ jid, bytes: image.length, hasCaption: !!caption }, 'Image message sent');
+    } catch (err) {
+      logger.error({ jid, err }, 'Failed to send image message');
     }
   }
 

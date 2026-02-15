@@ -128,17 +128,42 @@ export class GroupQueue {
    * Send a follow-up message to the active container via IPC file.
    * Returns true if the message was written, false if no active container.
    */
-  sendMessage(groupJid: string, text: string): boolean {
+  sendMessage(groupJid: string, text: string, mediaFiles?: Array<{hostPath: string, mediaType: string, sender: string, timestamp: string}>): boolean {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder) return false;
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
       fs.mkdirSync(inputDir, { recursive: true });
+
+      // Copy media files to IPC media dir and build container-internal paths
+      let containerMediaFiles: Array<{path: string, mediaType: string, sender: string, timestamp: string}> | undefined;
+      if (mediaFiles?.length) {
+        const mediaDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'media');
+        fs.mkdirSync(mediaDir, { recursive: true });
+        containerMediaFiles = [];
+        for (const mf of mediaFiles) {
+          if (fs.existsSync(mf.hostPath)) {
+            const basename = path.basename(mf.hostPath);
+            fs.copyFileSync(mf.hostPath, path.join(mediaDir, basename));
+            containerMediaFiles.push({
+              path: `/workspace/ipc/media/${basename}`,
+              mediaType: mf.mediaType,
+              sender: mf.sender,
+              timestamp: mf.timestamp,
+            });
+          }
+        }
+      }
+
       const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
       const filepath = path.join(inputDir, filename);
       const tempPath = `${filepath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
+      const payload: Record<string, unknown> = { type: 'message', text };
+      if (containerMediaFiles?.length) {
+        payload.mediaFiles = containerMediaFiles;
+      }
+      fs.writeFileSync(tempPath, JSON.stringify(payload));
       fs.renameSync(tempPath, filepath);
       return true;
     } catch {

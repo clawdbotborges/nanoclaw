@@ -49,6 +49,8 @@ export interface NewMessage {
   content: string;
   timestamp: string;
   is_from_me?: boolean;
+  mediaPath?: string;  // Host path to downloaded media file
+  mediaType?: string;  // MIME type (e.g. 'image/jpeg')
 }
 
 export interface ScheduledTask {
@@ -88,6 +90,8 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: send a voice message (audio buffer).
   sendVoiceMessage?(jid: string, audio: Buffer): Promise<void>;
+  // Optional: send an image message.
+  sendImageMessage?(jid: string, image: Buffer, caption?: string): Promise<void>;
   // Whether to prefix outbound messages with the assistant name.
   // Telegram bots already display their name, so they return false.
   // WhatsApp returns true. Default true if not implemented.

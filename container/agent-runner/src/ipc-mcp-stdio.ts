@@ -293,6 +293,46 @@ server.tool(
   },
 );
 
+server.tool(
+  'send_image',
+  "Send an image to the user. Save the image file first (e.g. via `agent-browser screenshot <path>`), then call this tool with the absolute path. The image will be sent as a WhatsApp photo message.",
+  {
+    image_path: z.string().describe('Absolute path to the image file inside the container'),
+    caption: z.string().optional().describe('Optional caption text for the image'),
+  },
+  async (args) => {
+    if (!fs.existsSync(args.image_path)) {
+      return {
+        content: [{ type: 'text' as const, text: `Image file not found: ${args.image_path}. Save the image first, then call send_image.` }],
+        isError: true,
+      };
+    }
+
+    let ipcRelative: string;
+    if (args.image_path.startsWith(IPC_DIR + '/')) {
+      ipcRelative = args.image_path.slice(IPC_DIR.length + 1);
+    } else {
+      // Image is outside IPC dir — copy it there so host can read it
+      const imagesDir = path.join(IPC_DIR, 'images');
+      fs.mkdirSync(imagesDir, { recursive: true });
+      const destName = `${Date.now()}-${path.basename(args.image_path)}`;
+      fs.copyFileSync(args.image_path, path.join(imagesDir, destName));
+      ipcRelative = `images/${destName}`;
+    }
+
+    writeIpcFile(MESSAGES_DIR, {
+      type: 'image_message',
+      chatJid,
+      imagePath: ipcRelative,
+      caption: args.caption || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { content: [{ type: 'text' as const, text: 'Image sent.' }] };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

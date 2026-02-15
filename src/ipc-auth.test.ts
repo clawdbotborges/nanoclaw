@@ -53,6 +53,7 @@ beforeEach(() => {
   deps = {
     sendMessage: async () => {},
     sendVoiceMessage: async () => {},
+    sendImageMessage: async () => {},
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;

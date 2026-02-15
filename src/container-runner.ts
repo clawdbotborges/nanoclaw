@@ -33,6 +33,13 @@ function getHomeDir(): string {
   return home;
 }
 
+export interface MediaFileRef {
+  hostPath: string;
+  mediaType: string;
+  sender: string;
+  timestamp: string;
+}
+
 export interface ContainerInput {
   prompt: string;
   sessionId?: string;
@@ -41,6 +48,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   secrets?: Record<string, string>;
+  mediaFiles?: MediaFileRef[];
 }
 
 export interface ContainerOutput {
@@ -296,9 +304,33 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    // Pass secrets via stdin (never written to disk or mounted as files)
-    input.secrets = readSecrets();
-    container.stdin.write(JSON.stringify(input));
+    // Copy media files to IPC dir and rewrite paths for container
+    let containerMediaFiles: Array<{path: string, mediaType: string, sender: string, timestamp: string}> | undefined;
+    if (input.mediaFiles?.length) {
+      const mediaDir = path.join(DATA_DIR, 'ipc', group.folder, 'media');
+      fs.mkdirSync(mediaDir, { recursive: true });
+      containerMediaFiles = [];
+      for (const mf of input.mediaFiles) {
+        if (fs.existsSync(mf.hostPath)) {
+          const basename = path.basename(mf.hostPath);
+          fs.copyFileSync(mf.hostPath, path.join(mediaDir, basename));
+          containerMediaFiles.push({
+            path: `/workspace/ipc/media/${basename}`,
+            mediaType: mf.mediaType,
+            sender: mf.sender,
+            timestamp: mf.timestamp,
+          });
+        }
+      }
+    }
+
+    // Build stdin JSON with container-internal media paths
+    const stdinInput = {
+      ...input,
+      mediaFiles: containerMediaFiles,
+      secrets: readSecrets(),
+    };
+    container.stdin.write(JSON.stringify(stdinInput));
     container.stdin.end();
     // Remove secrets from input so they don't appear in logs
     delete input.secrets;
