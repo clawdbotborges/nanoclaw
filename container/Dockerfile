@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y \
     libxshmfence1 \
     curl \
     git \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Chromium path for agent-browser
@@ -31,6 +32,16 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
+
+# Mermaid CLI for diagram generation (use system Chromium, skip bundled one)
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+RUN npm install -g @mermaid-js/mermaid-cli
+
+# Configure mermaid to use system Chromium + create convenience wrapper
+RUN mkdir -p /etc/mermaid && \
+    printf '{\n  "executablePath": "/usr/bin/chromium",\n  "args": ["--no-sandbox", "--disable-gpu"]\n}\n' > /etc/mermaid/puppeteer-config.json && \
+    printf '#!/bin/bash\nmmdc -p /etc/mermaid/puppeteer-config.json "$@"\n' > /usr/local/bin/mermaid && \
+    chmod +x /usr/local/bin/mermaid
 
 # Create app directory
 WORKDIR /app
