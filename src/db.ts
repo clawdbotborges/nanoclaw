@@ -209,7 +209,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.content,
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
-    msg.mediaPath || null,
+    msg.mediaPaths ? JSON.stringify(msg.mediaPaths) : (msg.mediaPath || null),
     msg.mediaType || null,
   );
 }

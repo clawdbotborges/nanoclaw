@@ -26,6 +26,16 @@ interface ContainerMediaFile {
   timestamp: string;
 }
 
+/** Detect actual MIME type from file magic bytes (WhatsApp often mislabels). */
+function detectImageMime(buf: Buffer): string {
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+  return 'image/jpeg'; // fallback
+}
+
 interface ContainerInput {
   prompt: string;
   sessionId?: string;
@@ -356,9 +366,10 @@ function buildContentForMessage(ipcMsg: IpcMessage): string | ContentBlock[] {
     if (fs.existsSync(mf.path)) {
       contentBlocks.push({ type: 'text', text: `${mf.sender} sent this at ${mf.timestamp}:` });
       const imageData = fs.readFileSync(mf.path);
+      const actualMime = detectImageMime(imageData);
       contentBlocks.push({
         type: 'image',
-        source: { type: 'base64', media_type: mf.mediaType, data: imageData.toString('base64') },
+        source: { type: 'base64', media_type: actualMime, data: imageData.toString('base64') },
       });
     }
   }
@@ -417,9 +428,10 @@ async function runQuery(
       if (fs.existsSync(mf.path)) {
         contentBlocks.push({ type: 'text', text: `${mf.sender} sent this at ${mf.timestamp}:` });
         const imageData = fs.readFileSync(mf.path);
+        const actualMime = detectImageMime(imageData);
         contentBlocks.push({
           type: 'image',
-          source: { type: 'base64', media_type: mf.mediaType, data: imageData.toString('base64') },
+          source: { type: 'base64', media_type: actualMime, data: imageData.toString('base64') },
         });
       }
     }

@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -286,6 +286,7 @@ export class WhatsAppChannel implements Channel {
 
           // Download image/video media for vision
           let mediaPath: string | undefined;
+          let mediaPaths: string[] | undefined;
           let mediaType: string | undefined;
 
           if (msg.message?.imageMessage) {
@@ -305,16 +306,68 @@ export class WhatsAppChannel implements Channel {
               if (!content) content = '[Image - download failed]';
             }
           } else if (msg.message?.videoMessage) {
-            const thumbnail = msg.message.videoMessage.jpegThumbnail;
-            if (thumbnail) {
+            const seconds = msg.message.videoMessage.seconds || 0;
+            try {
+              const buffer = await downloadMediaMessage(msg, 'buffer', {});
               const mediaDir = path.join(DATA_DIR, 'media');
               fs.mkdirSync(mediaDir, { recursive: true });
-              const filename = `${msg.key.id}-thumb.jpg`;
-              fs.writeFileSync(path.join(mediaDir, filename), thumbnail);
-              mediaPath = path.join(mediaDir, filename);
+              const videoPath = path.join(mediaDir, `${msg.key.id}.mp4`);
+              fs.writeFileSync(videoPath, buffer as Buffer);
+
+              // Extract frames: 1 per 2 seconds, max 8 frames
+              const maxFrames = Math.min(8, Math.max(1, Math.ceil(seconds / 2)));
+              const framePaths: string[] = [];
+              try {
+                if (maxFrames === 1) {
+                  const framePath = path.join(mediaDir, `${msg.key.id}-frame-0.jpg`);
+                  const seekTo = seconds > 1 ? '1' : '0';
+                  execSync(`ffmpeg -y -ss ${seekTo} -i "${videoPath}" -frames:v 1 -q:v 2 "${framePath}" 2>/dev/null`);
+                  if (fs.existsSync(framePath)) framePaths.push(framePath);
+                } else {
+                  // Extract evenly spaced frames across the video
+                  const interval = seconds / maxFrames;
+                  for (let i = 0; i < maxFrames; i++) {
+                    const seekTo = Math.min(Math.floor(interval * i + interval / 2), seconds - 1);
+                    const framePath = path.join(mediaDir, `${msg.key.id}-frame-${i}.jpg`);
+                    try {
+                      execSync(`ffmpeg -y -ss ${seekTo} -i "${videoPath}" -frames:v 1 -q:v 2 "${framePath}" 2>/dev/null`);
+                      if (fs.existsSync(framePath)) framePaths.push(framePath);
+                    } catch { /* skip failed frame */ }
+                  }
+                }
+              } catch {
+                // ffmpeg failed entirely — fall back to thumbnail
+                const thumbnail = msg.message.videoMessage.jpegThumbnail;
+                if (thumbnail) {
+                  const thumbPath = path.join(mediaDir, `${msg.key.id}-thumb.jpg`);
+                  fs.writeFileSync(thumbPath, thumbnail);
+                  framePaths.push(thumbPath);
+                }
+              }
+
+              if (framePaths.length === 1) {
+                mediaPath = framePaths[0];
+              } else if (framePaths.length > 1) {
+                mediaPaths = framePaths;
+              }
               mediaType = 'image/jpeg';
+
+              // Clean up video file (we only need the frames)
+              try { fs.unlinkSync(videoPath); } catch {}
+              logger.info({ chatJid, frameCount: framePaths.length, seconds }, 'Extracted video frames');
+            } catch (err) {
+              logger.error({ chatJid, err }, 'Failed to download video');
+              // Fall back to thumbnail
+              const thumbnail = msg.message.videoMessage.jpegThumbnail;
+              if (thumbnail) {
+                const mediaDir = path.join(DATA_DIR, 'media');
+                fs.mkdirSync(mediaDir, { recursive: true });
+                const thumbPath = path.join(mediaDir, `${msg.key.id}-thumb.jpg`);
+                fs.writeFileSync(thumbPath, thumbnail);
+                mediaPath = thumbPath;
+                mediaType = 'image/jpeg';
+              }
             }
-            const seconds = msg.message.videoMessage.seconds || 0;
             if (!content) content = `[Video: ${seconds}s]`;
           }
 
@@ -330,6 +383,7 @@ export class WhatsAppChannel implements Channel {
             timestamp,
             is_from_me: msg.key.fromMe || false,
             mediaPath,
+            mediaPaths,
             mediaType,
           });
         }

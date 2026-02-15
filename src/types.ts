@@ -49,8 +49,9 @@ export interface NewMessage {
   content: string;
   timestamp: string;
   is_from_me?: boolean;
-  mediaPath?: string;  // Host path to downloaded media file
-  mediaType?: string;  // MIME type (e.g. 'image/jpeg')
+  mediaPath?: string;   // Host path to downloaded media file (single)
+  mediaPaths?: string[]; // Multiple media files (e.g. video frames)
+  mediaType?: string;   // MIME type (e.g. 'image/jpeg')
 }
 
 export interface ScheduledTask {

@@ -143,14 +143,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const prompt = formatMessages(missedMessages);
 
   // Collect media files from messages for vision
-  const mediaFiles = missedMessages
-    .filter(m => m.mediaPath && m.mediaType)
-    .map(m => ({
-      hostPath: m.mediaPath!,
-      mediaType: m.mediaType!,
-      sender: m.sender_name,
-      timestamp: m.timestamp,
-    }));
+  const mediaFiles: Array<{hostPath: string, mediaType: string, sender: string, timestamp: string}> = [];
+  for (const m of missedMessages) {
+    if (!m.mediaType) continue;
+    // mediaPath may be a JSON array (video frames) or single path
+    let paths: string[] = [];
+    if (m.mediaPath?.startsWith('[')) {
+      try { paths = JSON.parse(m.mediaPath); } catch { /* ignore */ }
+    } else if (m.mediaPath) {
+      paths = [m.mediaPath];
+    }
+    for (const p of paths) {
+      mediaFiles.push({ hostPath: p, mediaType: m.mediaType, sender: m.sender_name, timestamp: m.timestamp });
+    }
+  }
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -365,14 +371,19 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend);
 
           // Collect media files from piped messages for vision
-          const pipedMediaFiles = messagesToSend
-            .filter(m => m.mediaPath && m.mediaType)
-            .map(m => ({
-              hostPath: m.mediaPath!,
-              mediaType: m.mediaType!,
-              sender: m.sender_name,
-              timestamp: m.timestamp,
-            }));
+          const pipedMediaFiles: Array<{hostPath: string, mediaType: string, sender: string, timestamp: string}> = [];
+          for (const m of messagesToSend) {
+            if (!m.mediaType) continue;
+            let paths: string[] = [];
+            if (m.mediaPath?.startsWith('[')) {
+              try { paths = JSON.parse(m.mediaPath); } catch { /* ignore */ }
+            } else if (m.mediaPath) {
+              paths = [m.mediaPath];
+            }
+            for (const p of paths) {
+              pipedMediaFiles.push({ hostPath: p, mediaType: m.mediaType, sender: m.sender_name, timestamp: m.timestamp });
+            }
+          }
 
           if (queue.sendMessage(chatJid, formatted, pipedMediaFiles.length ? pipedMediaFiles : undefined)) {
             logger.debug(
