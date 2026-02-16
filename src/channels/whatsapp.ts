@@ -30,6 +30,23 @@ function mimeToExt(mime: string): string {
   return map[mime] || 'jpg';
 }
 
+/** Resize image to fit within maxDim pixels (Claude API limit for multi-image: 2000px). */
+function resizeImageIfNeeded(imagePath: string, maxDim = 1600): void {
+  try {
+    const resized = `${imagePath}.resized.jpg`;
+    execSync(
+      `ffmpeg -y -i "${imagePath}" -vf "scale='min(${maxDim},iw)':'min(${maxDim},ih)':force_original_aspect_ratio=decrease" -q:v 2 "${resized}" 2>/dev/null`,
+    );
+    if (fs.existsSync(resized) && fs.statSync(resized).size > 0) {
+      fs.renameSync(resized, imagePath);
+    } else {
+      try { fs.unlinkSync(resized); } catch {}
+    }
+  } catch {
+    // ffmpeg not available or failed — keep original
+  }
+}
+
 /** Read a key from .env (same approach as container-runner.ts). */
 function readEnvKey(key: string): string | undefined {
   const envFile = path.join(process.cwd(), '.env');
@@ -298,7 +315,8 @@ export class WhatsAppChannel implements Channel {
               const filename = `${msg.key.id}.${ext}`;
               fs.writeFileSync(path.join(mediaDir, filename), buffer as Buffer);
               mediaPath = path.join(mediaDir, filename);
-              mediaType = msg.message.imageMessage.mimetype || 'image/jpeg';
+              resizeImageIfNeeded(mediaPath);
+              mediaType = 'image/jpeg';
               if (!content) content = '[Image]';
               logger.info({ chatJid, mediaPath }, 'Downloaded image media');
             } catch (err) {
@@ -318,10 +336,11 @@ export class WhatsAppChannel implements Channel {
               const maxFrames = Math.min(8, Math.max(1, Math.ceil(seconds / 2)));
               const framePaths: string[] = [];
               try {
+                const scaleFilter = "scale='min(1600,iw)':'min(1600,ih)':force_original_aspect_ratio=decrease";
                 if (maxFrames === 1) {
                   const framePath = path.join(mediaDir, `${msg.key.id}-frame-0.jpg`);
                   const seekTo = seconds > 1 ? '1' : '0';
-                  execSync(`ffmpeg -y -ss ${seekTo} -i "${videoPath}" -frames:v 1 -q:v 2 "${framePath}" 2>/dev/null`);
+                  execSync(`ffmpeg -y -ss ${seekTo} -i "${videoPath}" -frames:v 1 -vf "${scaleFilter}" -q:v 2 "${framePath}" 2>/dev/null`);
                   if (fs.existsSync(framePath)) framePaths.push(framePath);
                 } else {
                   // Extract evenly spaced frames across the video
@@ -330,7 +349,7 @@ export class WhatsAppChannel implements Channel {
                     const seekTo = Math.min(Math.floor(interval * i + interval / 2), seconds - 1);
                     const framePath = path.join(mediaDir, `${msg.key.id}-frame-${i}.jpg`);
                     try {
-                      execSync(`ffmpeg -y -ss ${seekTo} -i "${videoPath}" -frames:v 1 -q:v 2 "${framePath}" 2>/dev/null`);
+                      execSync(`ffmpeg -y -ss ${seekTo} -i "${videoPath}" -frames:v 1 -vf "${scaleFilter}" -q:v 2 "${framePath}" 2>/dev/null`);
                       if (fs.existsSync(framePath)) framePaths.push(framePath);
                     } catch { /* skip failed frame */ }
                   }
