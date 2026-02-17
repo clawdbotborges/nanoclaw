@@ -592,9 +592,15 @@ async function main(): Promise<void> {
 
   // Build SDK env: merge secrets into process.env for the SDK only.
   // Secrets never touch process.env itself, so Bash subprocesses can't see them.
+  // Exception: tool credentials (GOOGLE_API_KEY) are set in process.env so
+  // Bash scripts can use them — they're not system auth secrets.
+  const toolCredentialKeys = ['GOOGLE_API_KEY'];
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     sdkEnv[key] = value;
+    if (toolCredentialKeys.includes(key)) {
+      process.env[key] = value;
+    }
   }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
